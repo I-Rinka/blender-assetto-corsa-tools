@@ -48,7 +48,8 @@ NODE_SETTINGS = (
 
 
 class NodeWriter(KN5Writer):
-    def __init__(self, file, context, settings, warnings, material_writer, root_node_name="BlenderFile"):
+    def __init__(self, file, context, settings, warnings, material_writer,
+                 root_node_name="BlenderFile", even_split=False):
         super().__init__(file)
 
         self.context = context
@@ -56,6 +57,7 @@ class NodeWriter(KN5Writer):
         self.warnings = warnings
         self.material_writer = material_writer
         self.root_node_name = root_node_name
+        self.even_split = even_split
         self.scene = self.context.scene
         self.node_settings = []
         self.ac_objects = []
@@ -148,7 +150,10 @@ class NodeWriter(KN5Writer):
     def _write_mesh_node(self, obj, node_name=None):
         effective_name = node_name or obj.name
         divided_meshes = self._split_object_by_materials(obj)
-        divided_meshes = self._split_meshes_for_vertex_limit(divided_meshes)
+        if self.even_split:
+            divided_meshes = self._split_meshes_evenly(divided_meshes)
+        else:
+            divided_meshes = self._split_meshes_for_vertex_limit(divided_meshes)
         if obj.parent or len(divided_meshes) > 1:
             node_data = {}
             node_data["name"] = effective_name
@@ -315,6 +320,37 @@ class NodeWriter(KN5Writer):
                         if len(vertex_index_mapping) >= limit-3:
                             break
                     verts = [mesh.vertices[v] for v, index in sorted(vertex_index_mapping.items(), key=lambda k: k[1])]
+                    new_meshes.append(Mesh(mesh.material_id, verts, new_indices))
+            else:
+                new_meshes.append(mesh)
+        return new_meshes
+
+    def _split_meshes_evenly(self, divided_meshes):
+        import math
+        new_meshes = []
+        limit = 2**16
+        for mesh in divided_meshes:
+            if len(mesh.vertices) > limit:
+                total_faces = len(mesh.indices) // 3
+                num_chunks = math.ceil(len(mesh.vertices) / limit)
+                faces_per_chunk = math.ceil(total_faces / num_chunks)
+                self.warnings.append(
+                    f"Mesh with {len(mesh.vertices)} vertices split evenly into {num_chunks} parts"
+                )
+                for chunk_idx in range(num_chunks):
+                    face_start = chunk_idx * faces_per_chunk
+                    face_end = min((chunk_idx + 1) * faces_per_chunk, total_faces)
+                    vertex_index_mapping = {}
+                    new_indices = []
+                    for f in range(face_start, face_end):
+                        idx_base = f * 3
+                        face = mesh.indices[idx_base:idx_base + 3]
+                        for face_index in face:
+                            if face_index not in vertex_index_mapping:
+                                vertex_index_mapping[face_index] = len(vertex_index_mapping)
+                            new_indices.append(vertex_index_mapping[face_index])
+                    verts = [mesh.vertices[v] for v, _ in sorted(
+                        vertex_index_mapping.items(), key=lambda k: k[1])]
                     new_meshes.append(Mesh(mesh.material_id, verts, new_indices))
             else:
                 new_meshes.append(mesh)

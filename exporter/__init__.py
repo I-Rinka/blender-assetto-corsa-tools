@@ -76,13 +76,15 @@ class CopyClipboardButtonOperator(bpy.types.Operator):
 
 
 class KN5FileWriter(KN5Writer):
-    def __init__(self, file, context, settings, warnings, root_node_name="BlenderFile"):
+    def __init__(self, file, context, settings, warnings, root_node_name="BlenderFile",
+                 even_split=False):
         super().__init__(file)
 
         self.context = context
         self.settings = settings
         self.warnings = warnings
         self.root_node_name = root_node_name
+        self.even_split = even_split
 
         self.file_version = 5
 
@@ -100,7 +102,7 @@ class KN5FileWriter(KN5Writer):
         material_writer = MaterialWriter(self.file, self.context, self.settings, self.warnings)
         material_writer.write()
         node_writer = NodeWriter(self.file, self.context, self.settings, self.warnings, material_writer,
-                                  root_node_name=self.root_node_name)
+                                  root_node_name=self.root_node_name, even_split=self.even_split)
         node_writer.write()
 
 
@@ -116,6 +118,39 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
         default="",
         description="Name for the KN5 root node. Leave empty to auto-detect: "
                     "uses filename stem if car parts are assigned, 'BlenderFile' otherwise")
+
+    even_split_oversized: BoolProperty(
+        name="Even Split Oversized Meshes",
+        default=False,
+        description="Split meshes exceeding 65536 vertices into evenly sized parts. "
+                    "If disabled, oversized meshes are split sequentially (original behavior)")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "root_node_name")
+        layout.prop(self, "even_split_oversized")
+
+        oversized = self._find_oversized_meshes(context)
+        if oversized:
+            box = layout.box()
+            box.label(text="Oversized meshes detected:", icon='ERROR')
+            for name, count in oversized:
+                box.label(text=f"  {name}: {count} vertices")
+            if self.even_split_oversized:
+                box.label(text="Will be split into even parts", icon='CHECKMARK')
+            else:
+                box.label(text="Will use sequential split", icon='INFO')
+
+    @staticmethod
+    def _find_oversized_meshes(context):
+        limit = 2**16
+        oversized = []
+        for obj in context.blend_data.objects:
+            if obj.type != "MESH" or obj.name.startswith("__"):
+                continue
+            if len(obj.data.vertices) > limit:
+                oversized.append((obj.name, len(obj.data.vertices)))
+        return oversized
 
     def _has_car_parts(self, context):
         return any(
@@ -160,7 +195,8 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
                     self._validate_car_parts(context, warnings)
 
                 kn5_writer = KN5FileWriter(output_file, context, settings, warnings,
-                                           root_node_name=root_name)
+                                           root_node_name=root_name,
+                                           even_split=self.even_split_oversized)
                 kn5_writer.write()
                 bpy.ops.kn5.report_message(
                     'INVOKE_DEFAULT',

@@ -325,13 +325,31 @@ def validate_scene(context, bindings):
     else:
         print(f"  [ok] No duplicate role assignments")
 
+    # Oversized mesh check
+    limit = 2**16
+    oversized = []
+    for obj in mesh_objects:
+        vert_count = len(obj.data.vertices)
+        if vert_count > limit:
+            oversized.append((obj.name, vert_count))
+    if oversized:
+        import math
+        print()
+        for name, count in oversized:
+            num_parts = math.ceil(count / limit)
+            print(f"  [!!] Object '{name}' has {count} vertices (limit: {limit}), needs {num_parts} parts")
+            warnings.append(f"Object '{name}' has {count} vertices, exceeds {limit} limit")
+    else:
+        print(f"  [ok] All meshes within vertex limit ({limit})")
+
     print()
-    return issues, warnings
+    return issues, warnings, oversized
 
 
 # --- Export ---
 
-def do_export(context, filepath, settings, root_node_name, bindings, warnings_list):
+def do_export(context, filepath, settings, root_node_name, bindings, warnings_list,
+              even_split=False):
     # Apply car part roles to objects
     for role, obj_name in bindings.items():
         obj = context.blend_data.objects.get(obj_name)
@@ -352,7 +370,7 @@ def do_export(context, filepath, settings, root_node_name, bindings, warnings_li
         material_writer.write()
         # Write nodes
         node_writer = NodeWriter(output_file, context, settings, warnings_list, material_writer,
-                                 root_node_name=root_node_name)
+                                 root_node_name=root_node_name, even_split=even_split)
         node_writer.write()
     finally:
         output_file.close()
@@ -491,7 +509,7 @@ def main():
                 bindings = interactive_assign(context, {})
 
     # Stage 4: Validation
-    issues, warnings = validate_scene(context, bindings)
+    issues, warnings, oversized = validate_scene(context, bindings)
 
     # Determine root node name
     root_name = os.path.splitext(os.path.basename(output_path))[0] if bindings else "BlenderFile"
@@ -502,6 +520,23 @@ def main():
         print(f"\n  Found {len(issues)} issue(s):")
         for issue in issues:
             print(f"    - {issue}")
+
+    # Ask about oversized meshes
+    even_split = False
+    if oversized:
+        if non_interactive:
+            even_split = True
+            print("\n  Non-interactive mode: will use even split for oversized meshes.")
+        else:
+            try:
+                choice = input("\n  Oversized meshes detected. Use even split? [Y/n]: ").strip().lower()
+            except EOFError:
+                choice = 'y'
+            even_split = choice in ('', 'y', 'yes')
+            if even_split:
+                print("  Will split oversized meshes into even parts.")
+            else:
+                print("  Will use sequential split (original behavior).")
 
     if not non_interactive:
         if issues:
@@ -542,7 +577,8 @@ def main():
     print_header("Exporting")
     export_warnings = []
     try:
-        do_export(context, output_path, settings, root_name, bindings, export_warnings)
+        do_export(context, output_path, settings, root_name, bindings, export_warnings,
+                 even_split=even_split)
         print(f"\n  Exported successfully: {output_path}")
         if export_warnings:
             print(f"\n  Warnings ({len(export_warnings)}):")
