@@ -77,4 +77,29 @@ def read_settings(file):
     settings_path = os.path.join(dir_name, "settings.json")
     if not os.path.exists(settings_path):
         return {}
-    return json.loads(open(settings_path, "r").read())
+    with open(settings_path, "r") as f:
+        return json.loads(f.read())
+
+
+def write_settings(file, new_data):
+    full_path = os.path.abspath(file)
+    dir_name = os.path.dirname(full_path)
+    settings_path = os.path.join(dir_name, "settings.json")
+    settings = {}
+    if os.path.exists(settings_path):
+        with open(settings_path, "r") as f:
+            settings = json.loads(f.read())
+    settings.update(new_data)
+    with open(settings_path, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def read_car_parts_from_settings(settings):
+    return settings.get("carParts", {})
+
+
+def apply_car_parts_to_objects(context, car_parts):
+    for role, obj_name in car_parts.items():
+        obj = context.blend_data.objects.get(obj_name)
+        if obj:
+            obj.assettoCorsa.carPartRole = role

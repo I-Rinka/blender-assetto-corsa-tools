@@ -1,48 +1,133 @@
-# Blender KN5 Exporter
+# Blender Assetto Corsa Tools
 
-[![CI](https://github.com/moppius/blender-assetto-corsa-tools/actions/workflows/ci.yaml/badge.svg)](https://github.com/moppius/blender-assetto-corsa-tools/actions/workflows/ci.yaml)
+Blender addon for exporting scenes to Assetto Corsa's KN5 file format. Supports both **track** and **car model** export workflows, with an interactive CLI tool for headless batch processing.
+
+Based on Thomas Hagnhofer's original KN5 exporter, extended with car part role assignment, origin remapping, and a command-line export pipeline.
 
 ## Features
 
-* File format version 5
-* Blender mesh objects as kn5 geometry
-* Blender image textures as kn5 textures
-* Set material and object settings with JSON
-* Texture mapping with UV maps or flat mapping
-* Multiple materials per object
-
-
-## Current Bugs & Limitations
-
-* No support for skinned meshes (needed for animations)
-* No support for AI
-* Only geometry of mesh objects will be exported
-* Only textures of type "Image" supported
-
+- Export Blender scenes to KN5 format (version 5)
+- **Track export**: mesh geometry, textures, materials, AC logical objects (start positions, pit stops, timing gates)
+- **Car model export**: assign AC car part roles (STEER_HR, WHEEL_LF, etc.) via dropdown, auto-rename nodes on export
+- Auto-calculate rotation origins for car parts (bounding box center / top-center for suspension)
+- Scene-level car parts summary panel with validation (missing wheels, duplicate roles)
+- `settings.json` support for batch material/node overrides and persistent car part bindings
+- CLI interactive export tool (`cli_export.py`) for headless Blender workflows
+- Auto-matching objects to car part roles by name patterns
 
 ## Requirements
-This addon is made for the latest Blender version (currently 3.0.0), others may work but are not supported.
 
+Blender 3.0.0 or later.
 
 ## Install
 
-1. Download the _assetto_corsa_tools.zip_ from the [latest Release](https://github.com/moppius/blender-assetto-corsa-tools/releases/latest).
-2. Start Blender
-3. Go to _Edit -> Preferences -> Addons_
-4. Click "Install..." in the top right and browse to the downloaded zip file
-5. Enable the **"Assetto Corsa (.kn5)"** addon
+1. Download the addon zip from the [latest Release](https://github.com/moppius/blender-assetto-corsa-tools/releases/latest), or clone this repo and zip the folder
+2. In Blender: Edit > Preferences > Add-ons > Install...
+3. Select the zip file and enable **"Assetto Corsa (.kn5)"**
 
+## Usage — Track Export
 
-## Usage
+1. Set up a track scene with geometry and AC helper objects (`AC_START_0`, `AC_PIT_0`, etc.)
+2. File > Export > Assetto Corsa (.kn5)
+3. Place a `settings.json` in the export directory for material/node overrides
 
-1. Set up a track scene with geometry and helpers
-   * If you don't know how to do this, there's a [good overview tutorial on the assettocorsamods.com site here](https://assettocorsamods.net/threads/build-your-first-track-basic-guide.12/)
-3. Go to _File -> Export -> Assetto Corsa (.kn5)_
-4. Select target folder to save the track. Make sure that a valid _settings.json_ file exists
+For track creation guides, see [assettocorsamods.net](https://assettocorsamods.net/threads/build-your-first-track-basic-guide.12/).
 
+## Usage — Car Model Export
 
-## Notes
+### In Blender GUI
 
-This repository was initially created from the Blender 2.76 addon distributed as [_kn5exporter.zip_ on Thomas Hagnhofer's website](https://site.hagn.io/assettocorsa/blender-kn5-exporter).
+1. Select an object, open **Object Properties > AC Car Part** panel
+2. Choose a car part role from the dropdown (e.g., WHEEL_LF, STEER_HR)
+3. Click **Auto-Calculate Origin** to set the rotation pivot point
+4. Fine-tune with the **Origin Offset** vector if needed
+5. Check **Scene Properties > AC Car Parts Summary** for validation
+6. Export via File > Export > Assetto Corsa (.kn5)
+   - Root node name auto-detects: uses the filename for car models, "BlenderFile" for tracks
 
-Please visit that site for a downloadable example track, and more information on the original implementation.
+### Supported Car Parts
+
+| Category | Parts |
+|----------|-------|
+| Wheels (required) | `WHEEL_LF`, `WHEEL_RF`, `WHEEL_LR`, `WHEEL_RR` |
+| Steering | `STEER_HR` (high-res), `STEER_LR` (low-res) |
+| Cockpit | `COCKPIT_HR`, `COCKPIT_LR` |
+| Suspension | `SUSP_LF`, `SUSP_RF`, `SUSP_LR`, `SUSP_RR` |
+| Hubs | `HUB_LF`, `HUB_RF`, `HUB_LR`, `HUB_RR` |
+| Brake Discs | `DISC_LF`, `DISC_RF`, `DISC_LR`, `DISC_RR` |
+| Seatbelt | `CINTURE_ON`, `CINTURE_OFF` |
+| Body | `MOTORHOOD`, `REARHOOD` |
+| Aero | `REAR_WING` |
+
+## CLI Export Tool
+
+For headless / batch export without opening Blender's GUI:
+
+```bash
+# Interactive mode — prompts for car part assignment
+blender --background model.blend --python cli_export.py -- output.kn5
+
+# Auto-match objects to roles by name patterns
+blender --background model.blend --python cli_export.py -- --auto-assign output.kn5
+
+# Non-interactive — use saved settings.json config
+blender --background model.blend --python cli_export.py -- --non-interactive output.kn5
+
+# Custom settings file
+blender --background model.blend --python cli_export.py -- --settings my_config.json output.kn5
+```
+
+### CLI Workflow
+
+1. **Scene inspection** — prints object tree, materials, textures
+2. **Load saved config** — reads car part bindings from `settings.json`
+3. **Interactive assignment** — select objects for each car part role, or type `auto` for name-based matching
+4. **Validation checklist** — checks required parts, materials, UVs, textures, duplicates
+5. **Save config** — writes bindings to `settings.json` for reuse
+6. **Export** — generates the KN5 file
+
+## settings.json
+
+Place next to the export target. Supports material overrides, node overrides, and car part bindings:
+
+```json
+{
+  "carParts": {
+    "WHEEL_LF": "WheelFrontLeft",
+    "WHEEL_RF": "WheelFrontRight",
+    "WHEEL_LR": "WheelRearLeft",
+    "WHEEL_RR": "WheelRearRight",
+    "STEER_HR": "SteeringWheel"
+  },
+  "materials": {
+    "Road*": {
+      "shaderName": "ksPerPixel",
+      "alphaBlendMode": "Opaque"
+    }
+  },
+  "nodes": {
+    "TREE_*": {
+      "transparent": true,
+      "castShadows": false
+    }
+  }
+}
+```
+
+Keys in `materials` and `nodes` support `|` for alternatives and `*` for wildcards.
+
+## Limitations
+
+- **Export only** — no KN5 import
+- **No skinned meshes** — SkinnedMesh (node class 3) is not implemented; no bone/animation export
+- **No AI line data** — AI paths need separate tools
+- **No INI generation** — `surfaces.ini`, `cameras.ini`, etc. must be created manually
+- **65,536 vertex limit** per mesh (uint16 indices; auto-split for larger meshes)
+- **Mesh objects cannot have children** — use Empty objects as hierarchy containers
+- **Image textures only** — procedural Blender textures are not exported
+
+## License
+
+GPL v3 — see [LICENSE.txt](LICENSE.txt).
+
+Original addon by Thomas Hagnhofer (2014), updated by Paul Greveson. Car model features and CLI tool added 2026.

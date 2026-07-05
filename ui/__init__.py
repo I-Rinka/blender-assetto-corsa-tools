@@ -13,11 +13,12 @@
 
 
 import bpy
-from . import materials_ui, nodes_ui, textures_ui
+from . import materials_ui, nodes_ui, textures_ui, car_parts_ui
 
 
 REGISTER_CLASSES = (
     materials_ui,
     nodes_ui,
-    textures_ui
+    textures_ui,
+    car_parts_ui,
 )

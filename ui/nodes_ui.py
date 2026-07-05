@@ -17,9 +17,12 @@
 import bpy
 from bpy.props import (
     BoolProperty,
+    EnumProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
 )
+from ..utils.constants import CAR_PART_ROLES
 
 
 class NodeProperties(bpy.types.PropertyGroup):
@@ -53,6 +56,19 @@ class NodeProperties(bpy.types.PropertyGroup):
         name="Renderable",
         default=True,
         description="Toggles if the object should be rendered or not")
+    carPartRole: EnumProperty(
+        name="Car Part Role",
+        items=CAR_PART_ROLES,
+        default='NONE',
+        description="Assign an Assetto Corsa car part role. "
+                    "The role name replaces the Blender object name in the exported KN5")
+    carPartOriginOffset: FloatVectorProperty(
+        name="Origin Offset",
+        size=3,
+        default=(0.0, 0.0, 0.0),
+        subtype='TRANSLATION',
+        unit='LENGTH',
+        description="Manual offset added to the object origin at export time")
 
 
 class KN5_PT_NodePanel(bpy.types.Panel):
@@ -63,7 +79,7 @@ class KN5_PT_NodePanel(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.object and context.object.type in ["MESH", "CURVE"]
+        return context.object and context.object.type in ["MESH", "CURVE", "EMPTY"]
 
     def draw(self, context):
         ac_obj = context.object.assettoCorsa

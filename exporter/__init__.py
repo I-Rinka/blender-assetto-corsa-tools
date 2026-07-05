@@ -19,12 +19,12 @@ import os
 import bpy
 from bpy.props import BoolProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
-from .exporter_utils import read_settings
+from .exporter_utils import read_settings, read_car_parts_from_settings, apply_car_parts_to_objects
 from .kn5_writer import KN5Writer
 from .texture_writer import TextureWriter
 from .material_writer import MaterialWriter
 from .node_writer import NodeWriter
-from ..utils.constants import KN5_HEADER_BYTES
+from ..utils.constants import KN5_HEADER_BYTES, REQUIRED_CAR_PARTS
 
 
 class ReportOperator(bpy.types.Operator):
@@ -76,12 +76,13 @@ class CopyClipboardButtonOperator(bpy.types.Operator):
 
 
 class KN5FileWriter(KN5Writer):
-    def __init__(self, file, context, settings, warnings):
+    def __init__(self, file, context, settings, warnings, root_node_name="BlenderFile"):
         super().__init__(file)
 
         self.context = context
         self.settings = settings
         self.warnings = warnings
+        self.root_node_name = root_node_name
 
         self.file_version = 5
 
@@ -98,7 +99,8 @@ class KN5FileWriter(KN5Writer):
         texture_writer.write()
         material_writer = MaterialWriter(self.file, self.context, self.settings, self.warnings)
         material_writer.write()
-        node_writer = NodeWriter(self.file, self.context, self.settings, self.warnings, material_writer)
+        node_writer = NodeWriter(self.file, self.context, self.settings, self.warnings, material_writer,
+                                  root_node_name=self.root_node_name)
         node_writer.write()
 
 
@@ -109,13 +111,56 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
 
     filename_ext = ".kn5"
 
+    root_node_name: StringProperty(
+        name="Root Node Name",
+        default="",
+        description="Name for the KN5 root node. Leave empty to auto-detect: "
+                    "uses filename stem if car parts are assigned, 'BlenderFile' otherwise")
+
+    def _has_car_parts(self, context):
+        return any(
+            obj.assettoCorsa.carPartRole != 'NONE'
+            for obj in context.blend_data.objects
+        )
+
+    def _validate_car_parts(self, context, warnings):
+        assignments = {}
+        for obj in context.blend_data.objects:
+            role = obj.assettoCorsa.carPartRole
+            if role != 'NONE':
+                assignments.setdefault(role, []).append(obj.name)
+
+        missing = REQUIRED_CAR_PARTS - set(assignments.keys())
+        for part in sorted(missing):
+            warnings.append(f"Missing required car part: {part}")
+
+        for role, names in assignments.items():
+            if len(names) > 1:
+                warnings.append(f"Duplicate car part role {role}: {', '.join(names)}")
+
     def execute(self, context):
         warnings = []
         try:
             output_file = open(self.filepath, "wb")
             try:
                 settings = read_settings(self.filepath)
-                kn5_writer = KN5FileWriter(output_file, context, settings, warnings)
+
+                car_parts = read_car_parts_from_settings(settings)
+                if car_parts:
+                    apply_car_parts_to_objects(context, car_parts)
+
+                root_name = self.root_node_name
+                if not root_name:
+                    if self._has_car_parts(context):
+                        root_name = os.path.splitext(os.path.basename(self.filepath))[0]
+                    else:
+                        root_name = "BlenderFile"
+
+                if self._has_car_parts(context):
+                    self._validate_car_parts(context, warnings)
+
+                kn5_writer = KN5FileWriter(output_file, context, settings, warnings,
+                                           root_node_name=root_name)
                 kn5_writer.write()
                 bpy.ops.kn5.report_message(
                     'INVOKE_DEFAULT',
@@ -129,7 +174,6 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
         except: # pylint: disable=bare-except
             error = traceback.format_exc()
             try:
-                # Remove output file so we can't crash the engine with a broken file
                 os.remove(self.filepath)
             except: # pylint: disable=bare-except
                 pass

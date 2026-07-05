@@ -18,6 +18,7 @@ import os
 import re
 import bmesh
 from mathutils import Matrix
+from mathutils import Vector
 from .exporter_utils import (
     convert_matrix,
     convert_vector3,
@@ -47,13 +48,14 @@ NODE_SETTINGS = (
 
 
 class NodeWriter(KN5Writer):
-    def __init__(self, file, context, settings, warnings, material_writer):
+    def __init__(self, file, context, settings, warnings, material_writer, root_node_name="BlenderFile"):
         super().__init__(file)
 
         self.context = context
         self.settings = settings
         self.warnings = warnings
         self.material_writer = material_writer
+        self.root_node_name = root_node_name
         self.scene = self.context.scene
         self.node_settings = []
         self.ac_objects = []
@@ -76,20 +78,27 @@ class NodeWriter(KN5Writer):
                 return True
         return False
 
+    def _get_node_name(self, obj):
+        role = obj.assettoCorsa.carPartRole
+        if role != 'NONE':
+            return role
+        return obj.name
+
     def write(self):
-        self._write_base_node(None, "BlenderFile")
+        self._write_base_node(None, self.root_node_name)
         for obj in sorted(self.context.blend_data.objects, key=lambda k: len(k.children)):
             if not obj.parent:
                 self._write_object(obj)
 
     def _write_object(self, obj):
         if not obj.name.startswith("__"):
+            node_name = self._get_node_name(obj)
             if obj.type == "MESH":
                 if obj.children:
                     raise Exception(f"A mesh cannot contain children ('{obj.name}')")
-                self._write_mesh_node(obj)
+                self._write_mesh_node(obj, node_name)
             else:
-                self._write_base_node(obj, obj.name)
+                self._write_base_node(obj, node_name)
             for child in obj.children:
                 self._write_object(child)
 
@@ -109,11 +118,16 @@ class NodeWriter(KN5Writer):
                 if not obj.parent and not obj.name.startswith("__"):
                     num_children += 1
         else:
-            if not self._is_ac_object(obj.name) and not self._any_child_is_mesh(obj):
-                msg = f"Unknown logical object '{obj.name}' might prevent other objects from loading.{os.linesep}"
-                msg += "\tRename it to '__{obj.name}' if you do not want to export it."
+            if not self._is_ac_object(node_name) and not self._any_child_is_mesh(obj):
+                msg = f"Unknown logical object '{node_name}' might prevent other objects from loading.{os.linesep}"
+                msg += f"\tRename it to '__{obj.name}' if you do not want to export it."
                 self.warnings.append(msg)
             matrix = convert_matrix(obj.matrix_local)
+            offset = obj.assettoCorsa.carPartOriginOffset
+            if offset[0] != 0.0 or offset[1] != 0.0 or offset[2] != 0.0:
+                offset_vec = convert_vector3(Vector(offset))
+                offset_matrix = Matrix.Translation(offset_vec)
+                matrix = offset_matrix @ matrix
             for child in obj.children:
                 if not child.name.startswith("__"):
                     num_children += 1
@@ -131,12 +145,13 @@ class NodeWriter(KN5Writer):
         self.write_bool(node_data["active"])
         self.write_matrix(node_data["transform"])
 
-    def _write_mesh_node(self, obj):
+    def _write_mesh_node(self, obj, node_name=None):
+        effective_name = node_name or obj.name
         divided_meshes = self._split_object_by_materials(obj)
         divided_meshes = self._split_meshes_for_vertex_limit(divided_meshes)
         if obj.parent or len(divided_meshes) > 1:
             node_data = {}
-            node_data["name"] = obj.name
+            node_data["name"] = effective_name
             node_data["childCount"] = len(divided_meshes)
             node_data["active"] = True
             transform_matrix = Matrix()
@@ -148,14 +163,14 @@ class NodeWriter(KN5Writer):
         for node_setting in self.node_settings:
             node_setting.apply_settings_to_node(node_properties)
         for mesh in divided_meshes:
-            self._write_mesh(obj, mesh, node_properties)
+            self._write_mesh(obj, mesh, node_properties, effective_name)
 
     def _write_node_class(self, node_class):
         self.write_uint(NODE_CLASS[node_class])
 
-    def _write_mesh(self, obj, mesh, node_properties):
+    def _write_mesh(self, obj, mesh, node_properties, name=None):
         self._write_node_class("Mesh")
-        self.write_string(obj.name)
+        self.write_string(name or obj.name)
         self.write_uint(0) # Child count, none allowed
         is_active = True
         self.write_bool(is_active)
