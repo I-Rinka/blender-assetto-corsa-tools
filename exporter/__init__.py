@@ -77,7 +77,7 @@ class CopyClipboardButtonOperator(bpy.types.Operator):
 
 class KN5FileWriter(KN5Writer):
     def __init__(self, file, context, settings, warnings, root_node_name="BlenderFile",
-                 even_split=False):
+                 even_split=False, forward_axis='-Y'):
         super().__init__(file)
 
         self.context = context
@@ -85,6 +85,7 @@ class KN5FileWriter(KN5Writer):
         self.warnings = warnings
         self.root_node_name = root_node_name
         self.even_split = even_split
+        self.forward_axis = forward_axis
 
         self.file_version = 5
 
@@ -102,7 +103,8 @@ class KN5FileWriter(KN5Writer):
         material_writer = MaterialWriter(self.file, self.context, self.settings, self.warnings)
         material_writer.write()
         node_writer = NodeWriter(self.file, self.context, self.settings, self.warnings, material_writer,
-                                  root_node_name=self.root_node_name, even_split=self.even_split)
+                                  root_node_name=self.root_node_name, even_split=self.even_split,
+                                  forward_axis=self.forward_axis)
         node_writer.write()
 
 
@@ -125,10 +127,27 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
         description="Split meshes exceeding 65536 vertices into evenly sized parts. "
                     "If disabled, oversized meshes are split sequentially (original behavior)")
 
+    model_forward_axis: bpy.props.EnumProperty(
+        name="Model Forward Axis",
+        items=[
+            ('-Y', "-Y (Blender default)", "Model front faces Blender -Y"),
+            ('+Y', "+Y", "Model front faces Blender +Y"),
+            ('+X', "+X", "Model front faces Blender +X"),
+            ('-X', "-X", "Model front faces Blender -X"),
+        ],
+        default='-Y',
+        description="Which Blender axis the model's front faces. "
+                    "AC expects forward = +Z; a corrective rotation is applied if needed")
+
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "root_node_name")
+        layout.prop(self, "model_forward_axis")
         layout.prop(self, "even_split_oversized")
+
+        if self.model_forward_axis != '-Y':
+            box = layout.box()
+            box.label(text=f"Forward correction: {self.model_forward_axis} -> AC +Z", icon='ORIENTATION_NORMAL')
 
         oversized = self._find_oversized_meshes(context)
         if oversized:
@@ -196,7 +215,8 @@ class ExportKN5(bpy.types.Operator, ExportHelper):
 
                 kn5_writer = KN5FileWriter(output_file, context, settings, warnings,
                                            root_node_name=root_name,
-                                           even_split=self.even_split_oversized)
+                                           even_split=self.even_split_oversized,
+                                           forward_axis=self.model_forward_axis)
                 kn5_writer.write()
                 bpy.ops.kn5.report_message(
                     'INVOKE_DEFAULT',

@@ -14,6 +14,7 @@
 # Copyright (C) 2014  Thomas Hagnhofer
 
 
+import math
 import os
 import re
 import bmesh
@@ -47,9 +48,17 @@ NODE_SETTINGS = (
 )
 
 
+FORWARD_AXIS_ROTATIONS = {
+    '-Y': 0,
+    '+Y': math.pi,
+    '+X': -math.pi / 2,
+    '-X': math.pi / 2,
+}
+
+
 class NodeWriter(KN5Writer):
     def __init__(self, file, context, settings, warnings, material_writer,
-                 root_node_name="BlenderFile", even_split=False):
+                 root_node_name="BlenderFile", even_split=False, forward_axis='-Y'):
         super().__init__(file)
 
         self.context = context
@@ -58,6 +67,7 @@ class NodeWriter(KN5Writer):
         self.material_writer = material_writer
         self.root_node_name = root_node_name
         self.even_split = even_split
+        self.forward_axis = forward_axis
         self.scene = self.context.scene
         self.node_settings = []
         self.ac_objects = []
@@ -110,12 +120,18 @@ class NodeWriter(KN5Writer):
                 return True
         return False
 
+    def _get_root_transform(self):
+        angle = FORWARD_AXIS_ROTATIONS.get(self.forward_axis, 0)
+        if angle == 0:
+            return Matrix()
+        return Matrix.Rotation(angle, 4, 'Y')
+
     def _write_base_node(self, obj, node_name):
         node_data = {}
         matrix = None
         num_children = 0
         if not obj:
-            matrix = Matrix()
+            matrix = self._get_root_transform()
             for obj in self.context.blend_data.objects:
                 if not obj.parent and not obj.name.startswith("__"):
                     num_children += 1

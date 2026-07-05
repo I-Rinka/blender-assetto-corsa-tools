@@ -98,6 +98,50 @@ def auto_match_objects(objects):
     return assignments
 
 
+# --- Forward axis detection ---
+
+def detect_forward_axis(context, bindings):
+    front_roles = ('WHEEL_LF', 'WHEEL_RF')
+    rear_roles = ('WHEEL_LR', 'WHEEL_RR')
+
+    front_positions = []
+    rear_positions = []
+    for role in front_roles:
+        obj_name = bindings.get(role)
+        if obj_name:
+            obj = context.blend_data.objects.get(obj_name)
+            if obj:
+                front_positions.append(obj.location)
+    for role in rear_roles:
+        obj_name = bindings.get(role)
+        if obj_name:
+            obj = context.blend_data.objects.get(obj_name)
+            if obj:
+                rear_positions.append(obj.location)
+
+    if not front_positions or not rear_positions:
+        return None
+
+    from mathutils import Vector
+    front_avg = sum(front_positions, Vector()) / len(front_positions)
+    rear_avg = sum(rear_positions, Vector()) / len(rear_positions)
+    diff = front_avg - rear_avg
+
+    # Find dominant axis
+    abs_x, abs_y = abs(diff.x), abs(diff.y)
+    if abs_y >= abs_x:
+        return '+Y' if diff.y > 0 else '-Y'
+    return '+X' if diff.x > 0 else '-X'
+
+
+FORWARD_AXIS_OPTIONS = {
+    '1': '-Y',
+    '2': '+Y',
+    '3': '+X',
+    '4': '-X',
+}
+
+
 # --- Display helpers ---
 
 def print_header(title):
@@ -349,7 +393,7 @@ def validate_scene(context, bindings):
 # --- Export ---
 
 def do_export(context, filepath, settings, root_node_name, bindings, warnings_list,
-              even_split=False):
+              even_split=False, forward_axis='-Y'):
     # Apply car part roles to objects
     for role, obj_name in bindings.items():
         obj = context.blend_data.objects.get(obj_name)
@@ -370,7 +414,8 @@ def do_export(context, filepath, settings, root_node_name, bindings, warnings_li
         material_writer.write()
         # Write nodes
         node_writer = NodeWriter(output_file, context, settings, warnings_list, material_writer,
-                                 root_node_name=root_node_name, even_split=even_split)
+                                 root_node_name=root_node_name, even_split=even_split,
+                                 forward_axis=forward_axis)
         node_writer.write()
     finally:
         output_file.close()
@@ -538,6 +583,37 @@ def main():
             else:
                 print("  Will use sequential split (original behavior).")
 
+    # Forward axis detection and prompt
+    forward_axis = '-Y'
+    if bindings:
+        detected = detect_forward_axis(context, bindings)
+        if non_interactive:
+            if detected:
+                forward_axis = detected
+                print(f"\n  Auto-detected forward axis: {forward_axis}")
+        else:
+            print(f"\n  Model forward direction (which Blender axis the car front faces):")
+            if detected:
+                print(f"  Auto-detected from wheel positions: {detected}")
+            print(f"    1. -Y (Blender default)")
+            print(f"    2. +Y")
+            print(f"    3. +X")
+            print(f"    4. -X")
+            default = detected or '-Y'
+            default_num = {'-Y': '1', '+Y': '2', '+X': '3', '-X': '4'}[default]
+            try:
+                choice = input(f"  Select [1-4, default={default_num}]: ").strip()
+            except EOFError:
+                choice = ''
+            if choice in FORWARD_AXIS_OPTIONS:
+                forward_axis = FORWARD_AXIS_OPTIONS[choice]
+            else:
+                forward_axis = default
+            if forward_axis != '-Y':
+                print(f"  Will rotate model: {forward_axis} -> AC +Z (forward)")
+            else:
+                print(f"  No rotation needed (-Y -> AC +Z)")
+
     if not non_interactive:
         if issues:
             try:
@@ -578,7 +654,7 @@ def main():
     export_warnings = []
     try:
         do_export(context, output_path, settings, root_name, bindings, export_warnings,
-                 even_split=even_split)
+                 even_split=even_split, forward_axis=forward_axis)
         print(f"\n  Exported successfully: {output_path}")
         if export_warnings:
             print(f"\n  Warnings ({len(export_warnings)}):")
