@@ -177,7 +177,13 @@ class NodeWriter(KN5Writer):
             node_data["active"] = True
             transform_matrix = Matrix()
             if obj.parent:
-                transform_matrix = convert_matrix(obj.parent.matrix_world.inverted())
+                bbox_corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+                bbox_center = sum(bbox_corners, Vector()) / 8
+                parent_pos = obj.parent.matrix_world.translation
+                geo_center = Vector((parent_pos.x, bbox_center.y, bbox_center.z))
+                parent_copy = obj.parent.matrix_world.copy()
+                parent_copy.translation = geo_center
+                transform_matrix = convert_matrix(parent_copy.inverted())
             node_data["transform"] = transform_matrix
             self._write_base_node_data(node_data)
         node_properties = NodeProperties(obj)
@@ -347,27 +353,40 @@ class NodeWriter(KN5Writer):
         limit = 2**16
         for mesh in divided_meshes:
             if len(mesh.vertices) > limit:
+                # Greedy face-based splitting: accumulate faces until vertex limit is reached
                 total_faces = len(mesh.indices) // 3
-                num_chunks = math.ceil(len(mesh.vertices) / limit)
-                faces_per_chunk = math.ceil(total_faces / num_chunks)
-                self.warnings.append(
-                    f"Mesh with {len(mesh.vertices)} vertices split evenly into {num_chunks} parts"
-                )
-                for chunk_idx in range(num_chunks):
-                    face_start = chunk_idx * faces_per_chunk
-                    face_end = min((chunk_idx + 1) * faces_per_chunk, total_faces)
-                    vertex_index_mapping = {}
-                    new_indices = []
-                    for f in range(face_start, face_end):
-                        idx_base = f * 3
-                        face = mesh.indices[idx_base:idx_base + 3]
-                        for face_index in face:
-                            if face_index not in vertex_index_mapping:
-                                vertex_index_mapping[face_index] = len(vertex_index_mapping)
-                            new_indices.append(vertex_index_mapping[face_index])
+                vertex_index_mapping = {}
+                new_indices = []
+                chunk_count = 0
+
+                for f in range(total_faces):
+                    idx_base = f * 3
+                    face = mesh.indices[idx_base:idx_base + 3]
+                    # Count how many new vertices this face would add
+                    new_verts = sum(1 for fi in face if fi not in vertex_index_mapping)
+                    if len(vertex_index_mapping) + new_verts > limit - 3 and len(new_indices) > 0:
+                        # Flush current chunk
+                        verts = [mesh.vertices[v] for v, _ in sorted(
+                            vertex_index_mapping.items(), key=lambda k: k[1])]
+                        new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices)))
+                        chunk_count += 1
+                        vertex_index_mapping = {}
+                        new_indices = []
+                    for face_index in face:
+                        if face_index not in vertex_index_mapping:
+                            vertex_index_mapping[face_index] = len(vertex_index_mapping)
+                        new_indices.append(vertex_index_mapping[face_index])
+
+                # Flush remaining
+                if new_indices:
                     verts = [mesh.vertices[v] for v, _ in sorted(
                         vertex_index_mapping.items(), key=lambda k: k[1])]
-                    new_meshes.append(Mesh(mesh.material_id, verts, new_indices))
+                    new_meshes.append(Mesh(mesh.material_id, verts, list(new_indices)))
+                    chunk_count += 1
+
+                self.warnings.append(
+                    f"Mesh with {len(mesh.vertices)} vertices split into {chunk_count} parts"
+                )
             else:
                 new_meshes.append(mesh)
         return new_meshes

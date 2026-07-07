@@ -14,6 +14,11 @@
 # Copyright (C) 2014  Thomas Hagnhofer
 
 
+import os
+import tempfile
+
+import bpy
+
 from .kn5_writer import KN5Writer
 from .exporter_utils import get_all_texture_nodes
 
@@ -63,9 +68,22 @@ class TextureWriter(KN5Writer):
     def _get_image_data_from_texture(self, texture):
         image_copy = texture.image.copy()
         try:
+            # If the image is already packed, use the packed data directly
+            if image_copy.packed_file:
+                image_data = image_copy.packed_file.data
+                image_header_magic_bytes = image_data[:3]
+                # Check if it's DDS data
+                if image_header_magic_bytes == DDS_HEADER_BYTES:
+                    return image_data
+                # For non-DDS packed data, check if the original format is PNG
+                if image_copy.file_format == "PNG":
+                    return image_data
+                # Packed JPEG or other format - convert to PNG
+                return self._convert_image_to_png(image_copy)
+
+            # Image is not packed - try to pack it
             if image_copy.file_format in ("PNG", "DDS", ""):
-                if not image_copy.packed_file:
-                    image_copy.pack()
+                self._safe_pack(image_copy)
                 image_data = image_copy.packed_file.data
                 image_header_magic_bytes = image_data[:3]
                 if image_copy.file_format != "" or image_header_magic_bytes == DDS_HEADER_BYTES:
@@ -74,8 +92,31 @@ class TextureWriter(KN5Writer):
         finally:
             self.context.blend_data.images.remove(image_copy)
 
+    def _safe_pack(self, image):
+        """Pack image data, handling missing source files by saving to temp first."""
+        filepath = bpy.path.abspath(image.filepath)
+        if os.path.exists(filepath):
+            image.pack()
+        else:
+            # Source file missing - save pixel data to a temp file, then pack
+            ext = os.path.splitext(image.name)[1].lower()
+            if ext == '.dds':
+                tmp_name = image.name
+                image.file_format = 'DDS'
+            else:
+                tmp_name = os.path.splitext(image.name)[0] + '.png'
+                image.file_format = 'PNG'
+            tmp_path = os.path.join(tempfile.gettempdir(), tmp_name)
+            image.filepath_raw = tmp_path
+            image.save()
+            image.pack()
+
     def _convert_image_to_png(self, image):
-        if not image.packed_file:
-            image.unpack(method="WRITE_LOCAL")
+        # If already packed, save to temp file to get PNG data
+        tmp_name = os.path.splitext(image.name)[0] + '.png'
+        tmp_path = os.path.join(tempfile.gettempdir(), tmp_name)
+        image.filepath_raw = tmp_path
+        image.file_format = 'PNG'
+        image.save()
         image.pack()
         return image.packed_file.data
